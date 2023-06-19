@@ -52,5 +52,5 @@ http://ocelma.net/MusicRecommendationDataset/lastfm-1K.html
 | Dataset | lastfm | Desc                            |
 | ---------- | ---------- | ------------------------------- |
 | Users | 937    | users                           |
-| Products | 64,181 | SKUs            |
+| Products | 64,181 | musics            |
 | Number of Micro behaviors      | 12,566,899 | micro behaviors |
