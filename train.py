@@ -1,12 +1,14 @@
 import torch
-import data_loader
-import MB4CTR
+from .LoadData import *
+from .ubr import UBR_SA
+
+from .MB4CTR import MB4CTR
 import numpy as np
 from datetime import datetime
 from torch.autograd import Variable
-from .utils.loss import bpr_loss
 from .utils.evaluation import evaluate
 from .preprocess import Config
+from sklearn.metrics import roc_auc_score, log_loss
 
 
 def to_var(x, device, volatile=False):
@@ -36,40 +38,35 @@ def train(args):
 
     # in ['sku', 'bh', 'cid3', 'gap', 'dwell']
     micro_item_list = Config.get_micro_item_list(args.micro_mode)
-    map_file_bottom_id_to_itemsId = 'session.SBCGD.id.len30.SBCGD.mapping'
-    init_emb_wgts_bootom_items_path = 'sku.reidx,bh.reidx,cid3.reidx,gap.reidx,dwell.reidx'.split(',')
-    total_emb_path = 'session.SBCGD.id.len30.SBCGD.reidx'
 
     print("Loading data...", data_name)
     print("Micro_item_list: ", micro_item_list)
 
     if data_name == 'Computers':
-        num_users = 59220
-        num_items = 96318
-        train_loader, train_dataset = data_loader.get_loader('session.SBCGD.id.len30.SBCGD.id.train', data_name,
-                                                             micro_item_list, total_emb_path, map_file_bottom_id_to_itemsId,
-                                                             batch_size=batch_size)
-        test_loader, test_dataset = data_loader.get_loader('session.SBCGD.id.len30.SBCGD.id.test', data_name,
-                                                           micro_item_list, total_emb_path, map_file_bottom_id_to_itemsId,
-                                                           batch_size=batch_size, shuffle=False)
-    elif data_name == 'Computers_sample':
-        num_users = 10
-        num_items = 277
-        train_loader, train_dataset = data_loader.get_loader('session.SBCGD.id.len30.SBCGD.id.train', data_name,
-                                                             micro_item_list, total_emb_path, map_file_bottom_id_to_itemsId,
-                                                             batch_size=batch_size)
-        test_loader, test_dataset = data_loader.get_loader('session.SBCGD.id.len30.SBCGD.id.test', data_name,
-                                                           micro_item_list, total_emb_path, map_file_bottom_id_to_itemsId,
-                                                           batch_size=batch_size, shuffle=False)
-    print("train/test/: {:d}/{:d}".format(len(train_dataset), len(test_dataset)))
-    print("train/test/: {:d}/{:d}".format(len(train_loader), len(test_loader)))
+        num_users = 60242
+        num_items = 62006
+        f_number = 5
+        train_dataset, test_dataset, test_label = LoadData.get_data(data_name)
+    elif data_name == 'Applicances':
+        num_users = 86549
+        num_items = 59999
+        f_number = 5
+        train_dataset, test_dataset, test_label = LoadData.get_data(data_name)
+    elif data_name == 'UserBehaviors':
+        num_users = 117362
+        num_items = 2579724
+        f_number = 4
+        train_dataset, test_dataset, test_label = LoadData.get_data(data_name)
+        print("train/test/: {:d}/{:d}".format(len(train_dataset), len(test_dataset)))
     print("==================================================================================")
     # return train_loader, train_dataset, val_loader, val_dataset, test_loader, test_dataset
 
 
     # train_loader, train_dataset, val_loader, val_dataset, test_loader, test_dataset = process_data(data_name)
-    mb4ctr = MB4CTR.MB4CTR(data_name, num_items - 30, init_emb_wgts_bootom_items_path, total_emb_path,
-                                              negative_sample_size, device)
+
+    # ubr = UBR_SA(num_items - 30, 1590, 768, f_number, 'word2Vec')
+    mb4ctr = MB4CTR(data_name, num_items - 30, negative_sample_size, device)
+
     if device != 'cpu':
         mb4ctr.to(device)
 
@@ -77,45 +74,24 @@ def train(args):
 
     print("==================================================================================")
     print("Training Start..", datetime.now())
-    batch_loss = 0
-    batch_rat_loss = 0
-    batch_rank_loss = 0
-    # Train the Model
-    total_step = len(train_loader)
-    best_p5 = 0.0
-    best_p10 = 0.0
-    best_p20 = 0.0
-    best_r5 = 0.0
-    best_r10 = 0.0
-    best_r20 = 0.0
-    best_m5 = 0.0
-    best_m10 = 0.0
-    best_m20 = 0.0
-    best_map = 0.0
-    # KL_loss = nn.KLDivLoss(reduction='batchmean')
+
     for epoch in range(num_epochs):
-        for idx, (user_id, macro, micro) in enumerate(train_loader):
+        for idx, (user_id, macro, micro) in enumerate(train_dataset):
             micro = to_var(micro, device)
             macro = to_var(macro, device)
             user_id = to_var(user_id, device)
             rank_pos_outputs = mb4ctr(user_id, macro, micro)
-            rank_loss = 0.0
-            for i in range(n_sample):
-                neg_macro, neg_micro = train_dataset.get_neg_items(user_id, negative_sample_size)
-                neg_macro = to_var(neg_macro, device)
-                neg_micro = to_var(neg_micro, device)
-                rank_neg_outputs = mb4ctr(user_id, neg_macro, neg_micro, True)
 
-                if i == 0:
-                    rank_loss = bpr_loss(rank_pos_outputs, rank_neg_outputs)
-                else:
-                    rank_loss += bpr_loss(rank_pos_outputs, rank_neg_outputs)
-            loss = rank_loss
+            # Calculate AUC
+            auc = roc_auc_score(test_label, rank_pos_outputs)
+
+            # Calculate log loss
+            logloss = log_loss(test_label, rank_pos_outputs)
             optimizer.zero_grad()
-            loss.backward()
+            logloss.backward()
             optimizer.step()
             if idx % 100 == 0:
-                print(" loss: {}, time: {}".format(loss, datetime.now()))
+                print(" loss: {}, time: {}".format(logloss, datetime.now()))
         print("epoch: ", epoch, datetime.now())
         print("==================================================================================")
         print("Begin Ranking Prediction..")
@@ -134,11 +110,7 @@ def train(args):
                 user_emb = user_emb.squeeze()
                 user_lv = mb4ctr.user_latent_vector(user_torch).squeeze()
                 user_emb = torch.cat((user_emb, user_lv))
-                # item_emb = meta_property.item_embedding.weight.data
-                # item_lv = meta_property.item_latent_vector.weight.data
-                # item_emb = torch.cat((item_emb, item_lv), 1)
-                # pred_long_term_results = torch.mv(item_emb, user_emb)
-                pred_long_term_results = user_emb
+                 pred_long_term_results = user_emb
                 item_bias = mb4ctr.item_bias(to_var(torch.LongTensor(range(num_items + 1)), device)).squeeze()
                 trans_item_bias = torch.nn.Linear(num_items + 1, 1)
                 if device != 'cpu':
@@ -216,14 +188,6 @@ def train(args):
             print("==================================================================================")
             print("Testing End..")
 
-    print('Best Results after {0} epochs: test result , precision@5 {1:.5f}, recall@5 {2:.5f}, mrr@5 {3:.5f}, '
-          'precision@10 {4:.5f}, recall@10 {5:.5f}, mrr@10 {6:.5f}, precision@20 {7:.5f}, recall@20 {8:.5f}, '
-          'mrr@20 {9:.5f}, MAP {10:.5f}, time: {11}'.format(num_epochs, best_p5,
-                                                            best_r5, best_m5,
-                                                            best_p10, best_r10, best_m10,
-                                                            best_p20, best_r20, best_m20,
-                                                            best_map,
-                                                            datetime.now()))
     print("==================================================================================")
     print("Training End..")
 

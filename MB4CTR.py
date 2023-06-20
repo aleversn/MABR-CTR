@@ -1,8 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
-import ubr
-import gating_network
+from .gating_network import MAGNN
 
 
 
@@ -64,7 +63,7 @@ class Attention(nn.Module):
 
 class MB4CTR(nn.Module):
 
-    def __init__(self, data_name, latent_dim, init_emb_wgts_bottom_items_path, total_emb_path, num_negtive,
+    def __init__(self, data_name, latent_dim, num_negtive,
                  device='cpu'):
         super(MB4CTR, self).__init__()
         self.input_size = 30
@@ -74,8 +73,6 @@ class MB4CTR(nn.Module):
         self.review_out_dim = 600
         self.num_prop = 4
         self.emb_wgts_micro_items_dict = []
-        self.init_emb_wgts_bottom_items_path = init_emb_wgts_bottom_items_path
-        self.total_emb_path = total_emb_path
         if data_name == 'Computers_sample':
             self.num_users = 10
             self.num_items = 2255
@@ -104,6 +101,7 @@ class MB4CTR(nn.Module):
         self.user_bias = nn.Embedding(self.num_users + 1, 1)
         self.item_bias = nn.Embedding(self.num_items + 1, 1)
         self.mu_bias = Variable(torch.ones(1), requires_grad=True)
+        # self.magnn = MAGNN(self.num_users, self.num_items)
         if device != 'cpu':
             self.mu_bias = self.mu_bias.to(device)
 
@@ -116,6 +114,7 @@ class MB4CTR(nn.Module):
         user_feat = self.actLayer(user_feat)
         for i in range(len(user_id)):
             self.user_embedding.weight.data[user_id[i]].copy_(user_feat[i])
-
+        # long_interest = self.magnn(micro)
         out = torch.einsum('ij->', user_feat) + self.user_bias(user_id).squeeze() + self.mu_bias
+        # out = torch.einsum('ij->', user_feat) + self.user_bias(user_id).squeeze() + self.mu_bias + long_interest
         return out
